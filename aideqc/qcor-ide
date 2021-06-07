@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # PYTHON_ARGCOMPLETE_OK
-import docker
+import docker, requests
 import webbrowser
 import argparse
-import sys
+import sys, time
 import os
 import json
 import pwd
 from tabulate import tabulate
 from tqdm import tqdm
-
+import socket
 
 class bcolors:
     HEADER = '\033[95m'
@@ -34,19 +34,23 @@ available_url_port = {}
 # qcor-ide -stop name := Stop the running image
 # qcor-ide -uninstall := Remove the image
 
+# TODO
+# ADD open() command to open existing ide in browser.
+# Start, Stop, Uninstall multiple ides...
+
 qcor_ide_image = 'qcor/code-server'
 qcor_ide_dev_image = 'qcor/dev-code-server'
 start_no_name_provided = '__internal__qcor__no_name_provided__'
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="qcor: the quantum-classical C++ compiler",
+    parser = argparse.ArgumentParser(description="qcor-ide: the integrated development environment for quantum-classical computing.",
                                      formatter_class=argparse.RawTextHelpFormatter,
                                      fromfile_prefix_chars='@')
     parser.add_argument('-v', '--verbose', metavar='',
-                        help='turn on qcor-ide verbose mode - prints actual clang calls plus extra info while compiling.')
+                        help='turn on qcor-ide verbose mode.')
     parser.add_argument('-i', '--install', action='store_true',
-                        help='Install the AIDE-QC Integrated Development Environment')
+                        help='Install the qcor Integrated Development Environment')
     parser.add_argument('-u', '--uninstall', metavar='name', type=str,
                         help='Uninstall the qcor IDE with given name.')
     parser.add_argument('-d', '--dev', action='store_true',
@@ -62,6 +66,10 @@ def parse_args():
     parser.add_argument('--remote-ip', metavar='ip_address', type=str,
                         help='Provide the remote IP address to point web browser to.')
     
+    if len(sys.argv)==1:
+        parser.print_help(sys.stdout)
+        sys.exit(1)
+
     return parser.parse_args()
 
 
@@ -137,12 +145,26 @@ def start(client, is_dev, name, remote_ip = None):
         container = client.containers.run(image_name, detach=True, tty=True, stdin_open=True,
                                           user=user_id, name=name, volumes=vls, ports={'8080/tcp': port})
         cname = name if name != None else container.name
-        info("Starting qcor {}IDE with name {}.".format(
+        info("Starting qcor {}IDE with name {}. This should take a few seconds...".format(
             'developer ' if is_dev else '', cname))
-        ip = remote_ip if remote_ip != None else '127.0.0.1'
-        webbrowser.open('{}:{}'.format(ip, port))
+        ip = remote_ip if remote_ip != None else 'localhost'
+
+        def generator():
+            while True:
+                try:
+                    if requests.get('http://{}:{}'.format(ip,port)).status_code == 200:
+                        break
+                except:
+                    time.sleep(.1)
+                    yield
+
+        print(bcolors.OKGREEN)
+        for _ in tqdm(generator(), desc='Booting qcor IDE'):
+           continue
+        print(bcolors.ENDC)
+ 
+        webbrowser.open_new_tab('http://{}:{}'.format(ip, port))
         warning('If browser tab does not open automatically, navigate manually to {}:{}.'.format(ip, port))
-        
 
 
 def stop(client, is_dev, name):
