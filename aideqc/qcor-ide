@@ -1,0 +1,223 @@
+#!/usr/bin/env python3
+# PYTHON_ARGCOMPLETE_OK
+import docker
+import webbrowser
+import argparse
+import sys
+import os
+import json
+import pwd
+from tabulate import tabulate
+from tqdm import tqdm
+
+
+class bcolors:
+    HEADER = '\033[95m'
+    OKBLUE = '\033[94m'
+    OKCYAN = '\033[96m'
+    OKGREEN = '\033[92m'
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
+
+
+available_ides = {}
+available_url_port = {}
+
+# Functionality
+# qcor-ide -install := Pull down image if it doesn't exist
+# qcor-ide -update := Update the image
+# qcor-ide -start [optional_name] := Start a fresh image, open web tab with webbrowser
+# qcor-ide -list := print running ide names
+# qcor-ide -stop name := Stop the running image
+# qcor-ide -uninstall := Remove the image
+
+qcor_ide_image = 'qcor/code-server'
+qcor_ide_dev_image = 'qcor/dev-code-server'
+start_no_name_provided = '__internal__qcor__no_name_provided__'
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="qcor: the quantum-classical C++ compiler",
+                                     formatter_class=argparse.RawTextHelpFormatter,
+                                     fromfile_prefix_chars='@')
+    parser.add_argument('-v', '--verbose', metavar='',
+                        help='turn on qcor-ide verbose mode - prints actual clang calls plus extra info while compiling.')
+    parser.add_argument('-i', '--install', action='store_true',
+                        help='Install the AIDE-QC Integrated Development Environment')
+    parser.add_argument('-u', '--uninstall', metavar='name', type=str,
+                        help='Uninstall the qcor IDE with given name.')
+    parser.add_argument('-d', '--dev', action='store_true',
+                        help='Turn on Developer image')
+    parser.add_argument('-f', '--force', action='store_true',
+                        help='Force the action, like uninstall + stop.')
+    parser.add_argument('--start', metavar='optional_name', nargs='?',
+                        default=start_no_name_provided, const='', help='Start up a new qcor IDE')
+    parser.add_argument('-l','--list', action='store_true',
+                        help='List qcor IDEs that have been started.')
+    parser.add_argument('--stop', metavar='name', type=str,
+                        help='Stop qcor IDE with given name.')
+    parser.add_argument('--remote-ip', metavar='ip_address', type=str,
+                        help='Provide the remote IP address to point web browser to.')
+    
+    return parser.parse_args()
+
+
+def info(msg):
+    print('{}[qcor-ide]{} {}{}'.format(bcolors.OKBLUE,
+                                       bcolors.OKGREEN, msg, bcolors.ENDC))
+def warning(msg):
+    print('{}[qcor-ide]{} {}{}'.format(bcolors.OKBLUE,
+                                       bcolors.WARNING, msg, bcolors.ENDC))
+
+
+def pull(client, is_dev):
+    if not is_dev:
+        print(bcolors.OKGREEN)
+        for line in tqdm(client.api.pull(qcor_ide_image, stream=True, decode=True), desc='Downloading qcor-ide'):
+            continue
+        info('IDE downloaded, create one with --start CUSTOM_NAME (you provide the desired name for the IDE).')
+        print(bcolors.ENDC)
+    else:
+        client.images.pull(qcor_ide_dev_image)
+        for line in tqdm(client.api.pull(qcor_ide_image, stream=True, decode=True), desc='Downloading qcor-ide for developers'):
+            continue
+
+
+def update(client, is_dev):
+    pull(client, is_dev)
+
+
+def install(client, is_dev):
+    images = client.images
+    search_image = qcor_ide_image if not is_dev else qcor_ide_dev_image
+
+    image = None
+    try:
+        image = images.get(search_image)
+    except:
+        image = None
+
+    if image == None:
+        # print('[qcor-ide] Retrieving latest {}qcor-ide'.format('developer ' if is_dev else ''))
+        info('Retrieving latest {}qcor-ide. This will take a few minutes...'.format('developer ' if is_dev else ''))
+        pull(client, is_dev)
+    else:
+        # print('[qcor-ide] Installed (version {})'.format(image.short_id.replace('sha256:','')))
+        info('Installed (version {})'.format(
+            image.short_id.replace('sha256:', '')))
+        info('Create IDE with --start CUSTOM_NAME (you provide the desired name for the IDE).')
+
+
+    return
+
+
+def start(client, is_dev, name, remote_ip = None):
+    # if name not None and in available ides, start up the
+    # existing container that was stopped
+    if name in available_ides:
+        c = available_ides[name]
+        info('Start existing qcor IDE with name {}.'.format(name))
+        c.start()
+    else:
+        # docker run -it --name code-server -p 127.0.0.1:8080:8080   -v "$HOME/.config:/home/coder/.config"   -v "$PWD:/home/coder/qcor-work"   -u "$(id -u):$(id -g)"   -e "DOCKER_USER=$USER"   qcor/code-server
+        image_name = qcor_ide_image if not is_dev else qcor_ide_dev_image
+        user_name = pwd.getpwuid(os.getuid())[0]
+        user_id = pwd.getpwnam(user_name).pw_uid
+        home_dir = os.getenv('HOME')
+        cwd = os.getcwd()
+        container_work = '/home/coder/qcor-work'
+        config_dir = home_dir+'/.config'
+        container_config = '/home/coder/.config'
+        vls = {config_dir: {'bind': container_config, 'mode': 'rw'},
+               cwd: {'bind': container_work, 'mode': 'rw'}}
+        port = 8080+len(available_ides)
+        container = client.containers.run(image_name, detach=True, tty=True, stdin_open=True,
+                                          user=user_id, name=name, volumes=vls, ports={'8080/tcp': port})
+        cname = name if name != None else container.name
+        info("Starting qcor {}IDE with name {}.".format(
+            'developer ' if is_dev else '', cname))
+        ip = remote_ip if remote_ip != None else '127.0.0.1'
+        webbrowser.open('{}:{}'.format(ip, port))
+        warning('If browser tab does not open automatically, navigate manually to {}:{}.'.format(ip, port))
+        
+
+
+def stop(client, is_dev, name):
+    # if name is none, what should we stop?
+    c = available_ides[name]
+    info('Stopping qcor {}IDE with name {}.'.format(
+        'developer ' if is_dev else '', name))
+    c.stop()
+    return 0
+
+
+def list(client):
+    # print("{: >20} {: >20} {: >20}".format(*row))
+    table = [[k, v.status, True if qcor_ide_dev_image in str(v.image) else False, v.id[:12]] for k,v in available_ides.items()]
+    headers=["Name","Status", 'Is Dev', 'Internal ID']
+    print()
+    print(bcolors.OKBLUE+'Available qcor IDEs\n--------------------')
+    print(bcolors.OKGREEN, end='')
+    print(tabulate(table, headers, tablefmt="github"))
+    print(bcolors.ENDC)
+
+
+def uninstall(client, is_dev, force, name):
+    c = available_ides[name]
+    if c.status != 'exited' and force:
+        stop(client,is_dev, name)
+        c.remove()
+        info('Uninstalling {}container with name {}.'.format('developer ' if is_dev else '', name))
+        return
+    
+    if c.status != 'exited':
+        print(bcolors.FAIL +
+              '[qcor-ide error] This IDE is currently running, you must stop it first (--stop {}).'.format(name)+bcolors.ENDC)
+        exit(1)
+    c.remove()
+    info('Uninstalling {}container with name {}.'.format(
+        'developer ' if is_dev else '', name))
+
+
+def initialize(client):
+    global available_ides
+    containers = client.containers.list(all=True)
+    available_ides = {c.name: c for c in containers if qcor_ide_image in str(
+        c.image) or qcor_ide_dev_image in str(c.image)}
+
+
+def main():
+    client = docker.from_env()
+    initialize(client)
+
+    args = parse_args()
+    is_dev = args.dev
+
+    if args.list:
+        list(client)
+        return 0
+
+    if args.install:
+        install(client, is_dev)
+
+    if args.start != start_no_name_provided:
+        name = None if args.start == '' else args.start
+        start(client, is_dev, name, args.remote_ip)
+        return 0
+
+    if args.stop != None:
+        stop(client, is_dev, args.stop)
+
+    if args.uninstall != None:
+        if not args.uninstall in available_ides:
+            print(
+                bcolors.FAIL+'[qcor-ide error] Invalid IDE name. See available IDEs with -l or --list.'+bcolors.ENDC)
+            return 1
+        uninstall(client, is_dev, args.force, args.uninstall)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
