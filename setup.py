@@ -10,7 +10,7 @@ setup(
     license='BSD 3-clause, EPL, EDL',
     packages=['aideqc'],
     install_requires=['docker-py',
-                      'docker', 'tqdm', 'webbrowser', 'tabulate', 'argcomplete'
+                      'docker', 'tqdm', 'webbrowser', 'tabulate', 'argcomplete', 'six'
                       ],
 
     classifiers=[

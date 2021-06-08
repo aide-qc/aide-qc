@@ -9,7 +9,7 @@ import json
 import pwd
 from tabulate import tabulate
 from tqdm import tqdm
-import socket
+import socket, errno
 
 class bcolors:
     HEADER = '\033[95m'
@@ -37,7 +37,7 @@ available_url_port = {}
 # TODO
 # ADD open() command to open existing ide in browser.
 # Start, Stop, Uninstall multiple ides...
-
+# Update to latest ide image
 qcor_ide_image = 'qcor/code-server'
 qcor_ide_dev_image = 'qcor/dev-code-server'
 start_no_name_provided = '__internal__qcor__no_name_provided__'
@@ -51,7 +51,7 @@ def parse_args():
                         help='turn on qcor-ide verbose mode.')
     parser.add_argument('-i', '--install', action='store_true',
                         help='Install the qcor Integrated Development Environment')
-    parser.add_argument('-u', '--uninstall', metavar='name', type=str,
+    parser.add_argument('-u', '--uninstall', metavar='name', type=str, nargs='+',
                         help='Uninstall the qcor IDE with given name.')
     parser.add_argument('-d', '--dev', action='store_true',
                         help='Turn on Developer image')
@@ -59,9 +59,12 @@ def parse_args():
                         help='Force the action, like uninstall + stop.')
     parser.add_argument('--start', metavar='optional_name', nargs='?',
                         default=start_no_name_provided, const='', help='Start up a new qcor IDE')
+    parser.add_argument('-d', '--description', metavar='desc', type=str, help='Provide a description for the new IDE (use with --start).')
+    parser.add_argument('-o','--open', metavar='name', type=str,
+                        help='Open the running (started) IDE in the web browser.')
     parser.add_argument('-l','--list', action='store_true',
                         help='List qcor IDEs that have been started.')
-    parser.add_argument('--stop', metavar='name', type=str,
+    parser.add_argument('--stop', metavar='name', type=str, nargs='+',
                         help='Stop qcor IDE with given name.')
     parser.add_argument('--remote-ip', metavar='ip_address', type=str,
                         help='Provide the remote IP address to point web browser to.')
@@ -79,7 +82,20 @@ def info(msg):
 def warning(msg):
     print('{}[qcor-ide]{} {}{}'.format(bcolors.OKBLUE,
                                        bcolors.WARNING, msg, bcolors.ENDC))
+def port_available(p):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.bind(('127.0.0.1',p))
+        except socket.error as e:
+            if e.errno == errno.EADDRINUSE:
+                return False
+        return True
 
+def get_port():
+    p = 8080 + len(available_ides)
+    while not port_available(p):
+        p = p + 1
+    return p
 
 def pull(client, is_dev):
     if not is_dev:
@@ -89,40 +105,46 @@ def pull(client, is_dev):
         info('IDE downloaded, create one with --start CUSTOM_NAME (you provide the desired name for the IDE).')
         print(bcolors.ENDC)
     else:
-        client.images.pull(qcor_ide_dev_image)
-        for line in tqdm(client.api.pull(qcor_ide_image, stream=True, decode=True), desc='Downloading qcor-ide for developers'):
+        print(bcolors.OKGREEN)
+        for line in tqdm(client.api.pull(qcor_ide_dev_image, stream=True, decode=True), desc='Downloading qcor-ide for developers'):
             continue
+        info('IDE downloaded, create one with --start CUSTOM_NAME (you provide the desired name for the IDE).')
+        print(bcolors.ENDC)
 
 
 def update(client, is_dev):
     pull(client, is_dev)
 
-
-def install(client, is_dev):
-    images = client.images
+def get_image(client, is_dev):
     search_image = qcor_ide_image if not is_dev else qcor_ide_dev_image
-
     image = None
     try:
-        image = images.get(search_image)
+        image = client.images.get(search_image)
     except:
         image = None
+    
+    return image
 
+def install(client, is_dev):
+    image = get_image(client, is_dev)
     if image == None:
-        # print('[qcor-ide] Retrieving latest {}qcor-ide'.format('developer ' if is_dev else ''))
         info('Retrieving latest {}qcor-ide. This will take a few minutes...'.format('developer ' if is_dev else ''))
         pull(client, is_dev)
-    else:
-        # print('[qcor-ide] Installed (version {})'.format(image.short_id.replace('sha256:','')))
-        info('Installed (version {})'.format(
-            image.short_id.replace('sha256:', '')))
-        info('Create IDE with --start CUSTOM_NAME (you provide the desired name for the IDE).')
 
+    image = get_image(client, is_dev)
+    info('Installed (version {})'.format(
+        image.short_id.replace('sha256:', '')))
+    info('Create IDE with --start CUSTOM_NAME (you provide the desired name for the IDE).')
 
     return
 
 
 def start(client, is_dev, name, remote_ip = None):
+    # TODO If image not installed, we need to install first
+    image = get_image(client, is_dev)
+    if image == None:
+        install(client, is_dev)
+        
     # if name not None and in available ides, start up the
     # existing container that was stopped
     if name in available_ides:
@@ -141,12 +163,16 @@ def start(client, is_dev, name, remote_ip = None):
         container_config = '/home/coder/.config'
         vls = {config_dir: {'bind': container_config, 'mode': 'rw'},
                cwd: {'bind': container_work, 'mode': 'rw'}}
-        port = 8080+len(available_ides)
+        port = get_port() #8080+len(available_ides)
         container = client.containers.run(image_name, detach=True, tty=True, stdin_open=True,
                                           user=user_id, name=name, volumes=vls, ports={'8080/tcp': port})
         cname = name if name != None else container.name
-        info("Starting qcor {}IDE with name {}. This should take a few seconds...".format(
-            'developer ' if is_dev else '', cname))
+
+        if not is_dev:
+            info("Starting qcor IDE with name {}. This should take a few seconds...".format(cname))
+        else:
+            info("Starting qcor developer IDE with name {}. This image is larger than the non-developer image, and should take a few minutes to boot up...".format(cname))
+
         ip = remote_ip if remote_ip != None else 'localhost'
 
         def generator():
@@ -176,10 +202,14 @@ def stop(client, is_dev, name):
     return 0
 
 
+def get_container_host_port(client, c):
+    return client.api.inspect_container(c)['NetworkSettings']['Ports']['8080/tcp'][0]['HostPort']
+
+
 def list(client):
-    # print("{: >20} {: >20} {: >20}".format(*row))
-    table = [[k, v.status, True if qcor_ide_dev_image in str(v.image) else False, v.id[:12]] for k,v in available_ides.items()]
-    headers=["Name","Status", 'Is Dev', 'Internal ID']
+    table = [[k, v.status, True if qcor_ide_dev_image in str(
+        v.image) else False, v.id[:12], get_container_host_port(client, k)] for k, v in available_ides.items()]
+    headers = ["Name", "Status", 'Is Dev', 'Internal ID', 'Port']
     print()
     print(bcolors.OKBLUE+'Available qcor IDEs\n--------------------')
     print(bcolors.OKGREEN, end='')
@@ -231,14 +261,16 @@ def main():
         return 0
 
     if args.stop != None:
-        stop(client, is_dev, args.stop)
+        for e in args.stop:
+            stop(client, is_dev, e)
 
     if args.uninstall != None:
-        if not args.uninstall in available_ides:
-            print(
-                bcolors.FAIL+'[qcor-ide error] Invalid IDE name. See available IDEs with -l or --list.'+bcolors.ENDC)
-            return 1
-        uninstall(client, is_dev, args.force, args.uninstall)
+        for e in args.uninstall:
+            if not e in available_ides:
+                print(
+                    bcolors.FAIL+'[qcor-ide error] Invalid IDE name. See available IDEs with -l or --list.'+bcolors.ENDC)
+                return 1
+            uninstall(client, is_dev, args.force, e)
 
 
 if __name__ == "__main__":
