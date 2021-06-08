@@ -59,7 +59,7 @@ def parse_args():
                         help='Force the action, like uninstall + stop.')
     parser.add_argument('--start', metavar='optional_name', nargs='?',
                         default=start_no_name_provided, const='', help='Start up a new qcor IDE')
-    parser.add_argument('-d', '--description', metavar='desc', type=str, help='Provide a description for the new IDE (use with --start).')
+    parser.add_argument('--desc', metavar='desc', type=str, help='Provide a description for the new IDE (use with --start).')
     parser.add_argument('-o','--open', metavar='name', type=str,
                         help='Open the running (started) IDE in the web browser.')
     parser.add_argument('-l','--list', action='store_true',
@@ -163,7 +163,7 @@ def start(client, is_dev, name, remote_ip = None):
         container_config = '/home/coder/.config'
         vls = {config_dir: {'bind': container_config, 'mode': 'rw'},
                cwd: {'bind': container_work, 'mode': 'rw'}}
-        port = get_port() #8080+len(available_ides)
+        port = get_port() 
         container = client.containers.run(image_name, detach=True, tty=True, stdin_open=True,
                                           user=user_id, name=name, volumes=vls, ports={'8080/tcp': port})
         cname = name if name != None else container.name
