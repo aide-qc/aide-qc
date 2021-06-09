@@ -1,0 +1,277 @@
+#!/usr/bin/env python3
+# PYTHON_ARGCOMPLETE_OK
+import docker, requests
+import webbrowser
+import argparse
+import sys, time
+import os
+import json
+import pwd
+from tabulate import tabulate
+from tqdm import tqdm
+import socket, errno
+
+class bcolors:
+    HEADER = '\033[95m'
+    OKBLUE = '\033[94m'
+    OKCYAN = '\033[96m'
+    OKGREEN = '\033[92m'
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
+
+
+available_ides = {}
+available_url_port = {}
+
+# Functionality
+# qcor-ide -install := Pull down image if it doesn't exist
+# qcor-ide -update := Update the image
+# qcor-ide -start [optional_name] := Start a fresh image, open web tab with webbrowser
+# qcor-ide -list := print running ide names
+# qcor-ide -stop name := Stop the running image
+# qcor-ide -uninstall := Remove the image
+
+# TODO
+# ADD open() command to open existing ide in browser.
+# Start, Stop, Uninstall multiple ides...
+# Update to latest ide image
+qcor_ide_image = 'qcor/code-server'
+qcor_ide_dev_image = 'qcor/dev-code-server'
+start_no_name_provided = '__internal__qcor__no_name_provided__'
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="aide-qc: the integrated development environment for quantum-classical computing.",
+                                     formatter_class=argparse.RawTextHelpFormatter,
+                                     fromfile_prefix_chars='@')
+    parser.add_argument('-v', '--verbose', metavar='',
+                        help='turn on aide-qc verbose mode.')
+    parser.add_argument('-i', '--install', action='store_true',
+                        help='Install the aide-qc Integrated Development Environment')
+    parser.add_argument('-u', '--uninstall', metavar='name', type=str, nargs='+',
+                        help='Uninstall the aide-qc IDE with given name.')
+    parser.add_argument('-d', '--dev', action='store_true',
+                        help='Turn on Developer image')
+    parser.add_argument('-f', '--force', action='store_true',
+                        help='Force the action, like uninstall + stop.')
+    parser.add_argument('--start', metavar='optional_name', nargs='?',
+                        default=start_no_name_provided, const='', help='Start up a new aide-qc IDE')
+    parser.add_argument('--desc', metavar='desc', type=str, help='Provide a description for the new IDE (use with --start).')
+    parser.add_argument('-o','--open', metavar='name', type=str,
+                        help='Open the running (started) IDE in the web browser.')
+    parser.add_argument('-l','--list', action='store_true',
+                        help='List aide-qc IDEs that have been started.')
+    parser.add_argument('--stop', metavar='name', type=str, nargs='+',
+                        help='Stop aide-qc IDE with given name.')
+    parser.add_argument('--remote-ip', metavar='ip_address', type=str,
+                        help='Provide the remote IP address to point web browser to.')
+    
+    if len(sys.argv)==1:
+        parser.print_help(sys.stdout)
+        sys.exit(1)
+
+    return parser.parse_args()
+
+
+def info(msg):
+    print('{}[aide-qc]{} {}{}'.format(bcolors.OKBLUE,
+                                       bcolors.OKGREEN, msg, bcolors.ENDC))
+def warning(msg):
+    print('{}[aide-qc]{} {}{}'.format(bcolors.OKBLUE,
+                                       bcolors.WARNING, msg, bcolors.ENDC))
+def port_available(p):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.bind(('127.0.0.1',p))
+        except socket.error as e:
+            if e.errno == errno.EADDRINUSE:
+                return False
+        return True
+
+def get_port():
+    p = 8080 + len(available_ides)
+    while not port_available(p):
+        p = p + 1
+    return p
+
+def pull(client, is_dev):
+    if not is_dev:
+        print(bcolors.OKGREEN)
+        for line in tqdm(client.api.pull(qcor_ide_image, stream=True, decode=True), desc='Downloading aide-qc IDE'):
+            continue
+        info('IDE downloaded, create one with --start CUSTOM_NAME (you provide the desired name for the IDE).')
+        print(bcolors.ENDC)
+    else:
+        print(bcolors.OKGREEN)
+        for line in tqdm(client.api.pull(qcor_ide_dev_image, stream=True, decode=True), desc='Downloading the IDE for developers'):
+            continue
+        info('IDE downloaded, create one with --start CUSTOM_NAME (you provide the desired name for the IDE).')
+        print(bcolors.ENDC)
+
+
+def update(client, is_dev):
+    pull(client, is_dev)
+
+def get_image(client, is_dev):
+    search_image = qcor_ide_image if not is_dev else qcor_ide_dev_image
+    image = None
+    try:
+        image = client.images.get(search_image)
+    except:
+        image = None
+    
+    return image
+
+def install(client, is_dev):
+    image = get_image(client, is_dev)
+    if image == None:
+        info('Retrieving latest {}aide-qc IDE. This will take a few minutes...'.format('developer ' if is_dev else ''))
+        pull(client, is_dev)
+
+    image = get_image(client, is_dev)
+    info('Installed (version {})'.format(
+        image.short_id.replace('sha256:', '')))
+    info('Create IDE with --start CUSTOM_NAME (you provide the desired name for the IDE).')
+
+    return
+
+
+def start(client, is_dev, name, remote_ip = None):
+    # TODO If image not installed, we need to install first
+    image = get_image(client, is_dev)
+    if image == None:
+        install(client, is_dev)
+        
+    # if name not None and in available ides, start up the
+    # existing container that was stopped
+    if name in available_ides:
+        c = available_ides[name]
+        info('Start existing aide-qc IDE with name {}.'.format(name))
+        c.start()
+    else:
+        # docker run -it --name code-server -p 127.0.0.1:8080:8080   -v "$HOME/.config:/home/coder/.config"   -v "$PWD:/home/coder/qcor-work"   -u "$(id -u):$(id -g)"   -e "DOCKER_USER=$USER"   qcor/code-server
+        image_name = qcor_ide_image if not is_dev else qcor_ide_dev_image
+        user_name = pwd.getpwuid(os.getuid())[0]
+        user_id = pwd.getpwnam(user_name).pw_uid
+        home_dir = os.getenv('HOME')
+        cwd = os.getcwd()
+        container_work = '/home/coder/qcor-work'
+        config_dir = home_dir+'/.config'
+        container_config = '/home/coder/.config'
+        vls = {config_dir: {'bind': container_config, 'mode': 'rw'},
+               cwd: {'bind': container_work, 'mode': 'rw'}}
+        port = get_port() 
+        container = client.containers.run(image_name, detach=True, tty=True, stdin_open=True,
+                                          user=user_id, name=name, volumes=vls, ports={'8080/tcp': port})
+        cname = name if name != None else container.name
+
+        if not is_dev:
+            info("Starting aide-qc IDE with name {}. This should take a few seconds...".format(cname))
+        else:
+            info("Starting aide-qc developer IDE with name {}. This image is larger than the non-developer image, and should take a few minutes to boot up...".format(cname))
+
+        ip = remote_ip if remote_ip != None else 'localhost'
+
+        def generator():
+            while True:
+                try:
+                    if requests.get('http://{}:{}'.format(ip,port)).status_code == 200:
+                        break
+                except:
+                    time.sleep(.1)
+                    yield
+
+        print(bcolors.OKGREEN)
+        for _ in tqdm(generator(), desc='Booting aide-qc IDE'):
+           continue
+        print(bcolors.ENDC)
+ 
+        webbrowser.open_new_tab('http://{}:{}'.format(ip, port))
+        warning('If browser tab does not open automatically, navigate manually to {}:{}.'.format(ip, port))
+
+
+def stop(client, is_dev, name):
+    # if name is none, what should we stop?
+    c = available_ides[name]
+    info('Stopping aide-qc {}IDE with name {}.'.format(
+        'developer ' if is_dev else '', name))
+    c.stop()
+    return 0
+
+
+def get_container_host_port(client, c):
+    return client.api.inspect_container(c)['NetworkSettings']['Ports']['8080/tcp'][0]['HostPort']
+
+
+def list(client):
+    table = [[k, v.status, True if qcor_ide_dev_image in str(
+        v.image) else False, v.id[:12], get_container_host_port(client, k)] for k, v in available_ides.items()]
+    headers = ["Name", "Status", 'Is Dev', 'Internal ID', 'Port']
+    print()
+    print(bcolors.OKBLUE+'Available aide-qc IDEs\n-----------------------')
+    print(bcolors.OKGREEN, end='')
+    print(tabulate(table, headers, tablefmt="github"))
+    print(bcolors.ENDC)
+
+
+def uninstall(client, is_dev, force, name):
+    c = available_ides[name]
+    if c.status != 'exited' and force:
+        stop(client,is_dev, name)
+        c.remove()
+        info('Uninstalling {}container with name {}.'.format('developer ' if is_dev else '', name))
+        return
+    
+    if c.status != 'exited':
+        print(bcolors.FAIL +
+              '[aide-qc error] This IDE is currently running, you must stop it first (--stop {}).'.format(name)+bcolors.ENDC)
+        exit(1)
+    c.remove()
+    info('Uninstalling {}container with name {}.'.format(
+        'developer ' if is_dev else '', name))
+
+
+def initialize(client):
+    global available_ides
+    containers = client.containers.list(all=True)
+    available_ides = {c.name: c for c in containers if qcor_ide_image in str(
+        c.image) or qcor_ide_dev_image in str(c.image)}
+
+
+def main():
+    client = docker.from_env()
+    initialize(client)
+
+    args = parse_args()
+    is_dev = args.dev
+
+    if args.list:
+        list(client)
+        return 0
+
+    if args.install:
+        install(client, is_dev)
+
+    if args.start != start_no_name_provided:
+        name = None if args.start == '' else args.start
+        start(client, is_dev, name, args.remote_ip)
+        return 0
+
+    if args.stop != None:
+        for e in args.stop:
+            stop(client, is_dev, e)
+
+    if args.uninstall != None:
+        for e in args.uninstall:
+            if not e in available_ides:
+                print(
+                    bcolors.FAIL+'[aide-qc error] Invalid IDE name. See available IDEs with -l or --list.'+bcolors.ENDC)
+                return 1
+            uninstall(client, is_dev, args.force, e)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
