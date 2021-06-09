@@ -59,6 +59,7 @@ def parse_args():
                         help='Force the action, like uninstall + stop.')
     parser.add_argument('--start', metavar='optional_name', nargs='?',
                         default=start_no_name_provided, const='', help='Start up a new qcor IDE')
+    parser.add_argument('-p', '--port', metavar='port', type=int, help='Provide a specific port for the new IDE (use with --start).')
     parser.add_argument('--desc', metavar='desc', type=str, help='Provide a description for the new IDE (use with --start).')
     parser.add_argument('-o','--open', metavar='name', type=str,
                         help='Open the running (started) IDE in the web browser.')
@@ -79,6 +80,10 @@ def parse_args():
 def info(msg):
     print('{}[qcor-ide]{} {}{}'.format(bcolors.OKBLUE,
                                        bcolors.OKGREEN, msg, bcolors.ENDC))
+def error(msg):
+    print('{}[qcor-ide error] {}{}.'.format(bcolors.FAIL, msg, bcolors.ENDC))
+    exit(1)
+
 def warning(msg):
     print('{}[qcor-ide]{} {}{}'.format(bcolors.OKBLUE,
                                        bcolors.WARNING, msg, bcolors.ENDC))
@@ -139,7 +144,7 @@ def install(client, is_dev):
     return
 
 
-def start(client, is_dev, name, remote_ip = None):
+def start(client, is_dev, name, remote_ip = None, _port = None):
     # TODO If image not installed, we need to install first
     image = get_image(client, is_dev)
     if image == None:
@@ -163,15 +168,15 @@ def start(client, is_dev, name, remote_ip = None):
         container_config = '/home/coder/.config'
         vls = {config_dir: {'bind': container_config, 'mode': 'rw'},
                cwd: {'bind': container_work, 'mode': 'rw'}}
-        port = get_port() 
+        port = get_port() if _port == None else _port
         container = client.containers.run(image_name, detach=True, tty=True, stdin_open=True,
                                           user=user_id, name=name, volumes=vls, ports={'8080/tcp': port})
         cname = name if name != None else container.name
 
         if not is_dev:
-            info("Starting qcor IDE with name {}. This should take a few seconds...".format(cname))
+            info("Starting qcor IDE with name {} on port {}. This should take a few seconds...".format(cname, port))
         else:
-            info("Starting qcor developer IDE with name {}. This image is larger than the non-developer image, and should take a few minutes to boot up...".format(cname))
+            info("Starting qcor developer IDE with name {} on port {}. This image is larger than the non-developer image, and should take a few minutes to boot up...".format(cname, port))
 
         ip = remote_ip if remote_ip != None else 'localhost'
 
@@ -226,9 +231,8 @@ def uninstall(client, is_dev, force, name):
         return
     
     if c.status != 'exited':
-        print(bcolors.FAIL +
-              '[qcor-ide error] This IDE is currently running, you must stop it first (--stop {}).'.format(name)+bcolors.ENDC)
-        exit(1)
+        error('This IDE is currently running, you must stop it first (--stop {}).'.format(name))
+
     c.remove()
     info('Uninstalling {}container with name {}.'.format(
         'developer ' if is_dev else '', name))
@@ -248,6 +252,9 @@ def main():
     args = parse_args()
     is_dev = args.dev
 
+    if is_dev:
+        error('Developer mode is not yet supported. To develop qcor, build from source (see http://docs.aide-qc.org).')
+
     if args.list:
         list(client)
         return 0
@@ -255,9 +262,13 @@ def main():
     if args.install:
         install(client, is_dev)
 
+    port = None
+    if args.port != None:
+        port = args.port
+
     if args.start != start_no_name_provided:
         name = None if args.start == '' else args.start
-        start(client, is_dev, name, args.remote_ip)
+        start(client, is_dev, name, args.remote_ip, port)
         return 0
 
     if args.stop != None:
@@ -267,9 +278,9 @@ def main():
     if args.uninstall != None:
         for e in args.uninstall:
             if not e in available_ides:
-                print(
-                    bcolors.FAIL+'[qcor-ide error] Invalid IDE name. See available IDEs with -l or --list.'+bcolors.ENDC)
-                return 1
+                error(
+                    'Invalid IDE name. See available IDEs with -l or --list.')
+
             uninstall(client, is_dev, args.force, e)
 
 

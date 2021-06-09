@@ -79,6 +79,11 @@ def parse_args():
 def info(msg):
     print('{}[aide-qc]{} {}{}'.format(bcolors.OKBLUE,
                                        bcolors.OKGREEN, msg, bcolors.ENDC))
+
+def error(msg):
+    print('{}[aide-qc error] {}{}.'.format(bcolors.FAIL, msg, bcolors.ENDC))
+    exit(1)
+
 def warning(msg):
     print('{}[aide-qc]{} {}{}'.format(bcolors.OKBLUE,
                                        bcolors.WARNING, msg, bcolors.ENDC))
@@ -226,9 +231,8 @@ def uninstall(client, is_dev, force, name):
         return
     
     if c.status != 'exited':
-        print(bcolors.FAIL +
-              '[aide-qc error] This IDE is currently running, you must stop it first (--stop {}).'.format(name)+bcolors.ENDC)
-        exit(1)
+        error('This IDE is currently running, you must stop it first (--stop {}).'.format(name))
+
     c.remove()
     info('Uninstalling {}container with name {}.'.format(
         'developer ' if is_dev else '', name))
@@ -247,6 +251,9 @@ def main():
 
     args = parse_args()
     is_dev = args.dev
+
+    if is_dev:
+        error('Developer mode is not yet supported. To develop with aide-qc, build from source (see http://docs.aide-qc.org).')
 
     if args.list:
         list(client)
@@ -267,9 +274,9 @@ def main():
     if args.uninstall != None:
         for e in args.uninstall:
             if not e in available_ides:
-                print(
-                    bcolors.FAIL+'[aide-qc error] Invalid IDE name. See available IDEs with -l or --list.'+bcolors.ENDC)
-                return 1
+                error(
+                    'Invalid IDE name. See available IDEs with -l or --list.')
+                    
             uninstall(client, is_dev, args.force, e)
 
 
