@@ -68,6 +68,8 @@ def parse_args():
                         help='Stop aide-qc IDE with given name.')
     parser.add_argument('--remote-ip', metavar='ip_address', type=str,
                         help='Provide the remote IP address to point web browser to.')
+    parser.add_argument('--update', action='store_true',
+                        help='Update the IDE base image.')
     
     if len(sys.argv)==1:
         parser.print_help(sys.stdout)
@@ -103,22 +105,33 @@ def get_port():
     return p
 
 def pull(client, is_dev):
-    if not is_dev:
-        print(bcolors.OKGREEN)
-        for line in tqdm(client.api.pull(qcor_ide_image, stream=True, decode=True), desc='Downloading aide-qc IDE'):
-            continue
-        info('IDE downloaded, create one with --start CUSTOM_NAME (you provide the desired name for the IDE).')
-        print(bcolors.ENDC)
-    else:
-        print(bcolors.OKGREEN)
-        for line in tqdm(client.api.pull(qcor_ide_dev_image, stream=True, decode=True), desc='Downloading the IDE for developers'):
-            continue
-        info('IDE downloaded, create one with --start CUSTOM_NAME (you provide the desired name for the IDE).')
-        print(bcolors.ENDC)
+    print(bcolors.OKGREEN)
+    for line in tqdm(client.api.pull(qcor_ide_image if not is_dev else qcor_ide_dev_image, stream=True, decode=True), desc='Downloading aide-qc IDE{}'.format(' for developers' if is_dev else '')):
+        continue
+    info('aide-qc IDE downloaded. Create one with --start CUSTOM_NAME (you provide the desired name for the IDE).')
+    print(bcolors.ENDC)
 
 
 def update(client, is_dev):
-    pull(client, is_dev)
+    image = get_image(client, is_dev)
+    msg = ''
+    current_version = None
+    if image == None:
+        msg = 'aide-qc IDE image not found locally. Pulling fresh version {}.'
+    else:
+        current_version = image.id.replace('sha256:', '')[:12]
+        msg = 'updating aide-qc from version '+current_version+' to {}'
+
+    print(bcolors.OKGREEN)
+    for line in tqdm(client.api.pull(qcor_ide_image if not is_dev else qcor_ide_dev_image, stream=True, decode=True), desc='Checking for update'.format(' for developer IDE' if is_dev else '')):
+        continue
+    print(bcolors.ENDC)
+    image_version = get_image(client, is_dev).id.replace('sha256:', '')[:12]
+    if current_version == image_version:
+        msg = 'No new update available.'
+    else:
+        msg = msg.format(image_version)
+    info(msg)
 
 def get_image(client, is_dev):
     search_image = qcor_ide_image if not is_dev else qcor_ide_dev_image
@@ -154,6 +167,7 @@ def start(client, is_dev, name, remote_ip = None):
     # existing container that was stopped
     if name in available_ides:
         c = available_ides[name]
+        
         info('Start existing aide-qc IDE with name {}.'.format(name))
         c.start()
     else:
@@ -210,6 +224,32 @@ def stop(client, is_dev, name):
 def get_container_host_port(client, c):
     return client.api.inspect_container(c)['NetworkSettings']['Ports']['8080/tcp'][0]['HostPort']
 
+def open(client, is_dev, name):
+    if name not in available_ides:
+        error("invalid IDE name for open action. not in aide-qc -l list ({}).".format(name))
+    
+    if available_ides[name].status != 'running':
+        start(client, is_dev, name)
+    
+    port = get_container_host_port(client, name)
+
+    def generator():
+        while True:
+            try:
+                if requests.get('http://{}:{}'.format('localhost',port)).status_code == 200:
+                    break
+            except:
+                time.sleep(.1)
+                yield
+
+    print(bcolors.OKGREEN)
+    for _ in tqdm(generator(), desc='Opening aide-qc IDE'):
+        continue
+    print(bcolors.ENDC)
+ 
+    webbrowser.open_new_tab('http://{}:{}'.format('localhost', port))
+    
+
 
 def list(client):
     table = [[k, v.status, True if qcor_ide_dev_image in str(
@@ -258,6 +298,13 @@ def main():
     if args.list:
         list(client)
         return 0
+    
+    if args.update:
+        update(client, is_dev)
+        return 0
+
+    if args.open != None:
+        open(client, is_dev, args.open)
 
     if args.install:
         install(client, is_dev)
@@ -276,7 +323,7 @@ def main():
             if not e in available_ides:
                 error(
                     'Invalid IDE name. See available IDEs with -l or --list.')
-                    
+
             uninstall(client, is_dev, args.force, e)
 
 
