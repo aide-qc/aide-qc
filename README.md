@@ -5,4 +5,13 @@ The AIDE-QC project decomposes the stack research and development into Programmi
 
 AIDE-QC builds upon the service-oriented XACC quantum programming framework and puts forward service interfaces or plugins for quantum language parsing, intermediate representations, transformations on compiled circuits, error mitigation strategies, and backend execution and emulation, to name a few. These plugin interfaces enable the AIDE-QC to remain flexible as the quantum computing research landscape grows and advances. On top of that, AIDE-QC puts forward a novel C++ compiler for heterogeneous quantum-classical computing, QCOR.
 
-This repository holds nightly binary builds for the platform. 
+This repository holds nightly binary builds for the platform as well as a command line executable for creating browser-based IDEs for quantum-classical computing.
+
+## Install aide-qc IDE
+
+```bash
+$ python3 -m pip install --user .
+# -i installs the AIDE-QC IDE, start one with name myide
+$ aide-qc -i --start myide 
+# web browser tab should open with new IDE ready for your work
+```

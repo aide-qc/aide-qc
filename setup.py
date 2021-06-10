@@ -1,18 +1,17 @@
 from setuptools import setup
 
 setup(
-    name='aideqc',
+    name='aide-qc',
     version='0.0.1',    
-    description='Hello World',
+    description='Command line utility for creating and managing AIDE-QC IDEs for Quantum-Classical Computing.',
     url='http://docs.aide-qc.org',
     author='Alex McCaskey',
     author_email='mccaskeyaj@ornl.gov',
     license='BSD 3-clause, EPL, EDL',
     packages=['aideqc'],
-    install_requires=['docker-py',
-                      'docker', 'tqdm', 'webbrowser', 'tabulate', 'argcomplete', 'six'
-                      ],
-
+    install_requires=['docker', 'tqdm', 'requests',
+                      'tabulate', 'six'],
+    scripts= ['aideqc/aide-qc'],
     classifiers=[
         'Development Status :: 1 - Planning',
         'Intended Audience :: Science/Research',

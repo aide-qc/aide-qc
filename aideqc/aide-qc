@@ -66,6 +66,7 @@ def parse_args():
                         help='List aide-qc IDEs that have been started.')
     parser.add_argument('--stop', metavar='name', type=str, nargs='+',
                         help='Stop aide-qc IDE with given name.')
+    parser.add_argument('-p', '--port', metavar='port', type=int, help='Provide a specific port for the new IDE (use with --start).')
     parser.add_argument('--remote-ip', metavar='ip_address', type=str,
                         help='Provide the remote IP address to point web browser to.')
     parser.add_argument('--update', action='store_true',
@@ -157,7 +158,7 @@ def install(client, is_dev):
     return
 
 
-def start(client, is_dev, name, remote_ip = None):
+def start(client, is_dev, name, remote_ip = None, _port = None):
     # TODO If image not installed, we need to install first
     image = get_image(client, is_dev)
     if image == None:
@@ -182,15 +183,15 @@ def start(client, is_dev, name, remote_ip = None):
         container_config = '/home/coder/.config'
         vls = {config_dir: {'bind': container_config, 'mode': 'rw'},
                cwd: {'bind': container_work, 'mode': 'rw'}}
-        port = get_port() 
+        port = get_port() if _port == None else _port
         container = client.containers.run(image_name, detach=True, tty=True, stdin_open=True,
                                           user=user_id, name=name, volumes=vls, ports={'8080/tcp': port})
         cname = name if name != None else container.name
 
         if not is_dev:
-            info("Starting aide-qc IDE with name {}. This should take a few seconds...".format(cname))
+            info("Starting aide-qc IDE with name {} on port {}. This should take a few seconds...".format(cname, port))
         else:
-            info("Starting aide-qc developer IDE with name {}. This image is larger than the non-developer image, and should take a few minutes to boot up...".format(cname))
+            info("Starting aide-qc developer IDE with name {} on port {}. This image is larger than the non-developer image, and should take a few minutes to boot up...".format(cname, port))
 
         ip = remote_ip if remote_ip != None else 'localhost'
 
@@ -292,6 +293,10 @@ def main():
     args = parse_args()
     is_dev = args.dev
 
+    port = None
+    if args.port != None:
+        port = args.port
+
     if is_dev:
         error('Developer mode is not yet supported. To develop with aide-qc, build from source (see http://docs.aide-qc.org).')
 
@@ -311,7 +316,7 @@ def main():
 
     if args.start != start_no_name_provided:
         name = None if args.start == '' else args.start
-        start(client, is_dev, name, args.remote_ip)
+        start(client, is_dev, name, args.remote_ip, port)
         return 0
 
     if args.stop != None:
