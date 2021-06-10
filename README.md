@@ -14,4 +14,6 @@ $ python3 -m pip install --user .
 # -i installs the AIDE-QC IDE, start one with name myide
 $ aide-qc -i --start myide 
 # web browser tab should open with new IDE ready for your work
+# if --user, you may have to 
+$ export PATH=$PATH:$(python3 -m site --user-base)/bin
 ```
