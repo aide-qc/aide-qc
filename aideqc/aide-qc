@@ -47,8 +47,8 @@ def parse_args():
     parser = argparse.ArgumentParser(description="aide-qc: the integrated development environment for quantum-classical computing.",
                                      formatter_class=argparse.RawTextHelpFormatter,
                                      fromfile_prefix_chars='@')
-    parser.add_argument('-v', '--verbose', metavar='',
-                        help='turn on aide-qc verbose mode.')
+    parser.add_argument('--version', action='store_true',
+                        help='Print the installed IDE image version.')
     parser.add_argument('-i', '--install', action='store_true',
                         help='Install the aide-qc Integrated Development Environment')
     parser.add_argument('-u', '--uninstall', metavar='name', type=str, nargs='+',
@@ -292,6 +292,14 @@ def main():
 
     args = parse_args()
     is_dev = args.dev
+
+    if args.version:
+        i = get_image(client, is_dev)
+        if i != None:
+            info('Version: {}'.format(i.id.replace('sha256:', '')[:12]))
+            exit(0)
+        else:
+            error('IDE image not installed. Run aide-qc --install')
 
     port = None
     if args.port != None:
