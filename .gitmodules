@@ -1,0 +1,3 @@
+[submodule "code-server"]
+	path = code-server
+	url = https://github.com/aide-qc/code-server
