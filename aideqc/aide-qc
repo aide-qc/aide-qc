@@ -227,7 +227,8 @@ def stop(client, is_dev, name):
 
 
 def get_container_host_port(client, c):
-    return client.api.inspect_container(c)['NetworkSettings']['Ports']['8080/tcp'][0]['HostPort']
+    d = client.api.inspect_container(c)['NetworkSettings']['Ports']
+    return d['8080/tcp'][0]['HostPort'] if '8080/tcp' in d else 'None'
 
 def open(client, is_dev, name):
     if name not in available_ides:
