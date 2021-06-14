@@ -4,7 +4,7 @@ import docker, requests
 import webbrowser
 import argparse
 import sys, time
-import os
+import os, platform
 import json
 import pwd
 from tabulate import tabulate
@@ -153,7 +153,9 @@ def install(client, is_dev):
     image = get_image(client, is_dev)
     info('Installed (version {})'.format(
         image.short_id.replace('sha256:', '')))
-    info('Create IDE with --start CUSTOM_NAME (you provide the desired name for the IDE).')
+    
+    if '--start' not in sys.argv:
+        info('Start a new IDE with command:\n{}$ aide-qc --start [OPTIONAL_CUSTOM_IDE_NAME].'.format(' '*10))
 
     return
 
@@ -162,17 +164,19 @@ def start(client, is_dev, name, remote_ip = None, _port = None):
     # TODO If image not installed, we need to install first
     image = get_image(client, is_dev)
     if image == None:
+        info('IDE not installed, installing now. We only need to do this once.')
         install(client, is_dev)
         
     # if name not None and in available ides, start up the
     # existing container that was stopped
     if name in available_ides:
         c = available_ides[name]
-        
         info('Start existing aide-qc IDE with name {}.'.format(name))
         c.start()
     else:
-        # docker run -it --name code-server -p 127.0.0.1:8080:8080   -v "$HOME/.config:/home/coder/.config"   -v "$PWD:/home/coder/qcor-work"   -u "$(id -u):$(id -g)"   -e "DOCKER_USER=$USER"   qcor/code-server
+        # docker run -it --name code-server -p 127.0.0.1:8080:8080   
+        # -v "$HOME/.config:/home/coder/.config"   -v "$PWD:/home/coder/qcor-work"   
+        # -u "$(id -u):$(id -g)"   -e "DOCKER_USER=$USER"   qcor/code-server
         image_name = qcor_ide_image if not is_dev else qcor_ide_dev_image
         user_name = pwd.getpwuid(os.getuid())[0]
         user_id = pwd.getpwnam(user_name).pw_uid
@@ -287,7 +291,21 @@ def initialize(client):
 
 
 def main():
-    client = docker.from_env()
+    try:
+        client = docker.from_env()
+    except:
+        os_url = None
+        extra = ''
+        os = platform.system()
+        if os == 'Darwin':
+            os_url = 'https://docs.docker.com/docker-for-mac/install/'
+        elif os == 'Windows':
+            os_url = 'https://docs.docker.com/docker-for-windows/install/'
+        else:
+            os_url = 'https://docs.docker.com/engine/install/'
+            extra = ' and sub-links on LHS for specific OS distributions'
+        error("You must have Docker installed to use the aide-qc IDE.\nPlease see {}".format(os_url+extra))
+    
     initialize(client)
 
     args = parse_args()
