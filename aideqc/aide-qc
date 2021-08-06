@@ -38,7 +38,7 @@ available_url_port = {}
 # ADD open() command to open existing ide in browser.
 # Start, Stop, Uninstall multiple ides...
 # Update to latest ide image
-qcor_ide_image = 'qcor/code-server'
+qcor_ide_image = 'qcor/aide-qc'
 qcor_ide_dev_image = 'qcor/dev-code-server'
 start_no_name_provided = '__internal__qcor__no_name_provided__'
 
@@ -104,6 +104,7 @@ def get_port():
     while not port_available(p):
         p = p + 1
     return p
+
 
 def pull(client, is_dev):
     print(bcolors.OKGREEN)
@@ -174,9 +175,9 @@ def start(client, is_dev, name, remote_ip = None, _port = None):
         info('Start existing aide-qc IDE with name {}.'.format(name))
         c.start()
     else:
-        # docker run -it --name code-server -p 127.0.0.1:8080:8080   
-        # -v "$HOME/.config:/home/coder/.config"   -v "$PWD:/home/coder/qcor-work"   
-        # -u "$(id -u):$(id -g)"   -e "DOCKER_USER=$USER"   qcor/code-server
+        # docker run -d -it --name code-server -p 8080:8080   
+        # NOT THIS ANYMORE (OPTIONAL) -v "$HOME/.config:/home/coder/.config"   -v "$PWD:/home/coder/qcor-work"   -u "$(id -u):$(id -g)"   -e "DOCKER_USER=$USER"   
+        # qcor/aide-qc
         image_name = qcor_ide_image if not is_dev else qcor_ide_dev_image
         user_name = pwd.getpwuid(os.getuid())[0]
         user_id = pwd.getpwnam(user_name).pw_uid
@@ -189,7 +190,7 @@ def start(client, is_dev, name, remote_ip = None, _port = None):
                cwd: {'bind': container_work, 'mode': 'rw'}}
         port = get_port() if _port == None else _port
         container = client.containers.run(image_name, detach=True, tty=True, stdin_open=True,
-                                          user=user_id, name=name, volumes=vls, ports={'8080/tcp': port})
+                                           name=name,  ports={'8080/tcp': port})
         cname = name if name != None else container.name
 
         if not is_dev:
